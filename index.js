@@ -21,7 +21,7 @@ function sign(query) {
 }
 
 // =========================
-// SEND REQUEST (GET – QUAN TRỌNG)
+// SEND REQUEST (BINGX)
 // =========================
 async function send(path, params) {
   const timestamp = Date.now();
@@ -35,7 +35,7 @@ async function send(path, params) {
   const url = `${BASE_URL}${path}?${query}&signature=${signature}`;
 
   const res = await fetch(url, {
-    method: "GET", // 🔥 FIX QUAN TRỌNG
+    method: "GET", // BingX Swap V2 yêu cầu GET
     headers: {
       "X-BX-APIKEY": API_KEY,
     },
@@ -56,16 +56,20 @@ app.post("/webhook", async (req, res) => {
 
     const symbol = "BTC-USDT";
     const closeSide = side === "BUY" ? "SELL" : "BUY";
+    const ts = Date.now();
 
     console.log("📩 ENTRY:", req.body);
 
-    // ========= ENTRY =========
+    // =========================
+    // ENTRY (MARKET)
+    // =========================
     const entry = await send("/openApi/swap/v2/trade/order", {
       symbol,
       side,
       type: "MARKET",
       quantity: qty,
-      marginType: "ISOLATED",
+      marginType: "ISOLATED",          // đổi CROSSED nếu muốn Cross
+      clientOrderId: `TV_ENTRY_${ts}` // 🔥 BẮT BUỘC
     });
 
     console.log("✅ ENTRY RESULT:", entry);
@@ -73,7 +77,9 @@ app.post("/webhook", async (req, res) => {
       return res.json({ entry_error: entry });
     }
 
-    // ========= STOP LOSS =========
+    // =========================
+    // STOP LOSS
+    // =========================
     const stopLoss = await send("/openApi/swap/v2/trade/order", {
       symbol,
       side: closeSide,
@@ -82,11 +88,14 @@ app.post("/webhook", async (req, res) => {
       quantity: qty,
       reduceOnly: true,
       marginType: "ISOLATED",
+      clientOrderId: `TV_SL_${ts}`    // 🔥 BẮT BUỘC
     });
 
     console.log("🛑 SL RESULT:", stopLoss);
 
-    // ========= TAKE PROFIT =========
+    // =========================
+    // TAKE PROFIT (TP1)
+    // =========================
     const takeProfit = await send("/openApi/swap/v2/trade/order", {
       symbol,
       side: closeSide,
@@ -95,11 +104,13 @@ app.post("/webhook", async (req, res) => {
       quantity: qty,
       reduceOnly: true,
       marginType: "ISOLATED",
+      clientOrderId: `TV_TP_${ts}`    // 🔥 BẮT BUỘC
     });
 
     console.log("🎯 TP1 RESULT:", takeProfit);
 
     res.json({ ok: true, entry, stopLoss, takeProfit });
+
   } catch (e) {
     console.error("❌ ERROR:", e);
     res.status(500).json({ error: e.message });
@@ -107,7 +118,10 @@ app.post("/webhook", async (req, res) => {
 });
 
 // =========================
+// HEALTH CHECK
+// =========================
 app.get("/", (_, res) => res.send("BingX AutoBot Swap V2 running"));
+
 app.listen(PORT, () => {
   console.log(`🚀 BingX AutoBot running on port ${PORT}`);
 });
