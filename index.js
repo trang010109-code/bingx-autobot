@@ -1,6 +1,5 @@
 import express from "express";
 import crypto from "crypto";
-import fetch from "node-fetch";
 
 const app = express();
 app.use(express.json());
@@ -51,15 +50,7 @@ async function bingxRequest(method, path, params = {}) {
 // =====================
 app.post("/webhook", async (req, res) => {
   try {
-    const {
-      type,
-      symbol,
-      side,
-      entry,
-      sl,
-      tp1,
-      qty,
-    } = req.body;
+    const { type, symbol, side, sl, tp1, qty } = req.body;
 
     console.log("▶ ENTRY:", req.body);
 
@@ -68,57 +59,57 @@ app.post("/webhook", async (req, res) => {
     }
 
     const positionSide = side === "BUY" ? "LONG" : "SHORT";
-    const orderSide = side === "BUY" ? "BUY" : "SELL";
+    const entrySide = side === "BUY" ? "BUY" : "SELL";
+    const exitSide = side === "BUY" ? "SELL" : "BUY";
 
     // =====================
     // 1. ENTRY MARKET
     // =====================
-    const entryOrder = await bingxRequest("POST", "/openApi/swap/v2/trade/order", {
+    const entry = await bingxRequest("POST", "/openApi/swap/v2/trade/order", {
       symbol,
-      side: orderSide,
+      side: entrySide,
       positionSide,
       type: "MARKET",
       quantity: qty,
     });
-
-    console.log("✅ ENTRY placed", entryOrder);
+    console.log("✅ ENTRY OK", entry);
 
     // =====================
     // 2. STOP LOSS
     // =====================
     if (sl) {
-      const slOrder = await bingxRequest("POST", "/openApi/swap/v2/trade/order", {
+      const slRes = await bingxRequest("POST", "/openApi/swap/v2/trade/order", {
         symbol,
-        side: orderSide === "BUY" ? "SELL" : "BUY",
+        side: exitSide,
         positionSide,
         type: "STOP_MARKET",
         stopPrice: sl,
         quantity: qty,
         reduceOnly: true,
       });
-      console.log("🛑 SL placed", slOrder);
+      console.log("🛑 SL OK", slRes);
     }
 
     // =====================
     // 3. TAKE PROFIT (TP1)
     // =====================
     if (tp1) {
-      const tpOrder = await bingxRequest("POST", "/openApi/swap/v2/trade/order", {
+      const tpRes = await bingxRequest("POST", "/openApi/swap/v2/trade/order", {
         symbol,
-        side: orderSide === "BUY" ? "SELL" : "BUY",
+        side: exitSide,
         positionSide,
         type: "TAKE_PROFIT_MARKET",
         stopPrice: tp1,
         quantity: qty,
         reduceOnly: true,
       });
-      console.log("🎯 TP1 placed", tpOrder);
+      console.log("🎯 TP1 OK", tpRes);
     }
 
     res.json({ ok: true });
   } catch (err) {
     console.error("❌ ERROR:", err);
-    res.status(500).json({ ok: false, err: err.message });
+    res.status(500).json({ ok: false, error: err.message });
   }
 });
 
