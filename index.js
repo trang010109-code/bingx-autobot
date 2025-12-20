@@ -4,18 +4,15 @@ import crypto from "crypto";
 const app = express();
 app.use(express.json());
 
-// =====================
-// CONFIG
-// =====================
+const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.BINGX_API_KEY;
 const SECRET_KEY = process.env.BINGX_SECRET_KEY;
 
 const BASE_URL = "https://open-api.bingx.com";
-const PORT = process.env.PORT || 3000;
 
-// =====================
+// =========================
 // SIGN HELPER
-// =====================
+// =========================
 function sign(queryString) {
   return crypto
     .createHmac("sha256", SECRET_KEY)
@@ -23,18 +20,18 @@ function sign(queryString) {
     .digest("hex");
 }
 
-async function bingxRequest(method, path, params = {}) {
+// =========================
+// SEND REQUEST
+// =========================
+async function sendRequest(path, params) {
   const timestamp = Date.now();
-  const query = new URLSearchParams({
-    ...params,
-    timestamp,
-  }).toString();
-
+  const query = new URLSearchParams({ ...params, timestamp }).toString();
   const signature = sign(query);
+
   const url = `${BASE_URL}${path}?${query}&signature=${signature}`;
 
   const res = await fetch(url, {
-    method,
+    method: "POST",
     headers: {
       "X-BX-APIKEY": API_KEY,
       "Content-Type": "application/json",
@@ -45,79 +42,103 @@ async function bingxRequest(method, path, params = {}) {
   return data;
 }
 
-// =====================
+// =========================
 // WEBHOOK
-// =====================
+// =========================
 app.post("/webhook", async (req, res) => {
   try {
-    const { type, symbol, side, sl, tp1, qty } = req.body;
-
-    console.log("▶ ENTRY:", req.body);
+    const {
+      type,
+      symbol,
+      side,
+      entry,
+      sl,
+      tp1,
+      qty,
+    } = req.body;
 
     if (type !== "entry_scalp") {
-      return res.json({ ok: false, msg: "Invalid type" });
+      return res.json({ ignored: true });
     }
 
+    console.log("📩 ENTRY:", req.body);
+
     const positionSide = side === "BUY" ? "LONG" : "SHORT";
-    const entrySide = side === "BUY" ? "BUY" : "SELL";
-    const exitSide = side === "BUY" ? "SELL" : "BUY";
+    const closeSide = side === "BUY" ? "SELL" : "BUY";
 
-    // =====================
-    // 1. ENTRY MARKET
-    // =====================
-    const entry = await bingxRequest("POST", "/openApi/swap/v2/trade/order", {
-      symbol,
-      side: entrySide,
-      positionSide,
-      type: "MARKET",
-      quantity: qty,
-    });
-    console.log("✅ ENTRY OK", entry);
-
-    // =====================
-    // 2. STOP LOSS
-    // =====================
-    if (sl) {
-      const slRes = await bingxRequest("POST", "/openApi/swap/v2/trade/order", {
+    // =========================
+    // ENTRY (MARKET)
+    // =========================
+    const entryResult = await sendRequest(
+      "/openApi/swap/v2/trade/order",
+      {
         symbol,
-        side: exitSide,
+        side,
+        positionSide,
+        type: "MARKET",
+        quantity: qty,
+      }
+    );
+
+    console.log("✅ ENTRY RESULT:", entryResult);
+
+    if (entryResult.code !== 0) {
+      return res.json({ entry_error: entryResult });
+    }
+
+    // =========================
+    // STOP LOSS
+    // =========================
+    const slResult = await sendRequest(
+      "/openApi/swap/v2/trade/order",
+      {
+        symbol,
+        side: closeSide,
         positionSide,
         type: "STOP_MARKET",
         stopPrice: sl,
         quantity: qty,
         reduceOnly: true,
-      });
-      console.log("🛑 SL OK", slRes);
-    }
+      }
+    );
 
-    // =====================
-    // 3. TAKE PROFIT (TP1)
-    // =====================
-    if (tp1) {
-      const tpRes = await bingxRequest("POST", "/openApi/swap/v2/trade/order", {
+    console.log("🛑 SL RESULT:", slResult);
+
+    // =========================
+    // TAKE PROFIT (TP1)
+    // =========================
+    const tpResult = await sendRequest(
+      "/openApi/swap/v2/trade/order",
+      {
         symbol,
-        side: exitSide,
+        side: closeSide,
         positionSide,
         type: "TAKE_PROFIT_MARKET",
         stopPrice: tp1,
         quantity: qty,
         reduceOnly: true,
-      });
-      console.log("🎯 TP1 OK", tpRes);
-    }
+      }
+    );
 
-    res.json({ ok: true });
+    console.log("🎯 TP RESULT:", tpResult);
+
+    res.json({
+      ok: true,
+      entry: entryResult,
+      sl: slResult,
+      tp: tpResult,
+    });
   } catch (err) {
     console.error("❌ ERROR:", err);
-    res.status(500).json({ ok: false, error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
-// =====================
+// =========================
 // HEALTH CHECK
-// =====================
+// =========================
 app.get("/", (req, res) => {
-  res.send("BingX AutoBot running");
+  res.send("BingX AutoBot running (Hedge Mode)");
 });
 
 app.listen(PORT, () => {
