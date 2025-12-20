@@ -21,7 +21,7 @@ function sign(query) {
 }
 
 // =========================
-// SEND REQUEST
+// SEND REQUEST (GET – QUAN TRỌNG)
 // =========================
 async function send(path, params) {
   const timestamp = Date.now();
@@ -35,10 +35,9 @@ async function send(path, params) {
   const url = `${BASE_URL}${path}?${query}&signature=${signature}`;
 
   const res = await fetch(url, {
-    method: "POST",
+    method: "GET", // 🔥 FIX QUAN TRỌNG
     headers: {
       "X-BX-APIKEY": API_KEY,
-      "Content-Type": "application/json",
     },
   });
 
@@ -55,7 +54,7 @@ app.post("/webhook", async (req, res) => {
       return res.json({ ignored: true });
     }
 
-    const symbol = "BTC-USDT"; // ✅ ĐÚNG DUY NHẤT
+    const symbol = "BTC-USDT";
     const closeSide = side === "BUY" ? "SELL" : "BUY";
 
     console.log("📩 ENTRY:", req.body);
