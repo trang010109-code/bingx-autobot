@@ -45,16 +45,18 @@ app.post("/webhook", async (req, res) => {
   try {
     const { type, side, sl, tp1, qty } = req.body;
 
-    if (type !== "entry_scalp") return res.json({ ignored: true });
+    if (type !== "entry_scalp") {
+      return res.json({ ignored: true });
+    }
 
-    const symbol = "BTC-USDT-SWAP"; // ✅ FIX
+    const symbol = "BTC-USDT-SWAP";
     const positionSide = side === "BUY" ? "LONG" : "SHORT";
     const closeSide = side === "BUY" ? "SELL" : "BUY";
 
-    console.log("📩 ALERT:", req.body);
+    console.log("📩 ENTRY:", req.body);
 
     // =========================
-    // ENTRY MARKET (NO PRICE)
+    // ENTRY (MARKET)
     // =========================
     const entry = await send("/openApi/swap/v2/trade/order", {
       symbol,
@@ -62,40 +64,53 @@ app.post("/webhook", async (req, res) => {
       positionSide,
       type: "MARKET",
       quantity: qty,
+      marginMode: "ISOLATED",     // ✅ BẮT BUỘC
     });
 
-    console.log("✅ ENTRY:", entry);
-    if (entry.code !== 0) return res.json({ entry_error: entry });
+    console.log("✅ ENTRY RESULT:", entry);
+    if (entry.code !== 0) {
+      return res.json({ entry_error: entry });
+    }
 
     // =========================
-    // STOP LOSS (PLAN ORDER)
+    // STOP LOSS
     // =========================
-    const slOrder = await send("/openApi/swap/v1/plan/place", {
+    const stopLoss = await send("/openApi/swap/v2/trade/order", {
       symbol,
       side: closeSide,
       positionSide,
       type: "STOP_MARKET",
       stopPrice: sl,
       quantity: qty,
+      reduceOnly: true,           // ✅ BẮT BUỘC
+      marginMode: "ISOLATED",
     });
 
-    console.log("🛑 SL:", slOrder);
+    console.log("🛑 SL RESULT:", stopLoss);
 
     // =========================
-    // TAKE PROFIT (PLAN ORDER)
+    // TAKE PROFIT (TP1)
     // =========================
-    const tpOrder = await send("/openApi/swap/v1/plan/place", {
+    const takeProfit = await send("/openApi/swap/v2/trade/order", {
       symbol,
       side: closeSide,
       positionSide,
       type: "TAKE_PROFIT_MARKET",
       stopPrice: tp1,
       quantity: qty,
+      reduceOnly: true,           // ✅ BẮT BUỘC
+      marginMode: "ISOLATED",
     });
 
-    console.log("🎯 TP1:", tpOrder);
+    console.log("🎯 TP1 RESULT:", takeProfit);
 
-    res.json({ ok: true, entry, slOrder, tpOrder });
+    res.json({
+      ok: true,
+      entry,
+      stopLoss,
+      takeProfit,
+    });
+
   } catch (e) {
     console.error("❌ ERROR:", e);
     res.status(500).json({ error: e.message });
@@ -103,5 +118,5 @@ app.post("/webhook", async (req, res) => {
 });
 
 // =========================
-app.get("/", (_, res) => res.send("BingX AutoBot Hedge Mode OK"));
-app.listen(PORT, () => console.log("🚀 BingX Bot running on", PORT));
+app.get("/", (_, res) => res.send("BingX AutoBot Hedge Mode RUNNING"));
+app.listen(PORT, () => console.log("🚀 BingX Bot running on port", PORT));
