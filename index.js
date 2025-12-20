@@ -11,20 +11,26 @@ const SECRET_KEY = process.env.BINGX_SECRET_KEY;
 const BASE_URL = "https://open-api.bingx.com";
 
 // =========================
-// SIGN
+// SIGN HELPER
 // =========================
 function sign(query) {
-  return crypto.createHmac("sha256", SECRET_KEY).update(query).digest("hex");
+  return crypto
+    .createHmac("sha256", SECRET_KEY)
+    .update(query)
+    .digest("hex");
 }
 
 // =========================
-// REQUEST
+// SEND REQUEST
 // =========================
 async function send(path, params) {
   const timestamp = Date.now();
-  const query = new URLSearchParams({ ...params, timestamp }).toString();
-  const signature = sign(query);
+  const query = new URLSearchParams({
+    ...params,
+    timestamp,
+  }).toString();
 
+  const signature = sign(query);
   const url = `${BASE_URL}${path}?${query}&signature=${signature}`;
 
   const res = await fetch(url, {
@@ -49,14 +55,15 @@ app.post("/webhook", async (req, res) => {
       return res.json({ ignored: true });
     }
 
+    // ===== FIX CHUẨN BINGX =====
     const symbol = "BTC-USDT-SWAP";
-    const positionSide = side === "BUY" ? "LONG" : "SHORT";
+    const positionSide = "BOTH"; // 🔥 QUAN TRỌNG
     const closeSide = side === "BUY" ? "SELL" : "BUY";
 
     console.log("📩 ENTRY:", req.body);
 
     // =========================
-    // ENTRY (MARKET)
+    // ENTRY - MARKET
     // =========================
     const entry = await send("/openApi/swap/v2/trade/order", {
       symbol,
@@ -64,10 +71,11 @@ app.post("/webhook", async (req, res) => {
       positionSide,
       type: "MARKET",
       quantity: qty,
-      marginMode: "ISOLATED",     // ✅ BẮT BUỘC
+      marginMode: "ISOLATED",
     });
 
     console.log("✅ ENTRY RESULT:", entry);
+
     if (entry.code !== 0) {
       return res.json({ entry_error: entry });
     }
@@ -82,7 +90,7 @@ app.post("/webhook", async (req, res) => {
       type: "STOP_MARKET",
       stopPrice: sl,
       quantity: qty,
-      reduceOnly: true,           // ✅ BẮT BUỘC
+      reduceOnly: true,
       marginMode: "ISOLATED",
     });
 
@@ -98,7 +106,7 @@ app.post("/webhook", async (req, res) => {
       type: "TAKE_PROFIT_MARKET",
       stopPrice: tp1,
       quantity: qty,
-      reduceOnly: true,           // ✅ BẮT BUỘC
+      reduceOnly: true,
       marginMode: "ISOLATED",
     });
 
@@ -110,7 +118,6 @@ app.post("/webhook", async (req, res) => {
       stopLoss,
       takeProfit,
     });
-
   } catch (e) {
     console.error("❌ ERROR:", e);
     res.status(500).json({ error: e.message });
@@ -118,5 +125,12 @@ app.post("/webhook", async (req, res) => {
 });
 
 // =========================
-app.get("/", (_, res) => res.send("BingX AutoBot Hedge Mode RUNNING"));
-app.listen(PORT, () => console.log("🚀 BingX Bot running on port", PORT));
+// HEALTH CHECK
+// =========================
+app.get("/", (_, res) => {
+  res.send("BingX AutoBot Futures SWAP running");
+});
+
+app.listen(PORT, () => {
+  console.log(`🚀 BingX AutoBot running on port ${PORT}`);
+});
