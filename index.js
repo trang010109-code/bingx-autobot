@@ -1,17 +1,20 @@
 import express from "express";
 import crypto from "crypto";
+import fetch from "node-fetch";
 
 const app = express();
 app.use(express.json());
 
+// =========================
+// ENV
+// =========================
 const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.BINGX_API_KEY;
 const SECRET_KEY = process.env.BINGX_SECRET_KEY;
-
 const BASE_URL = "https://open-api.bingx.com";
 
 // =========================
-// SIGN
+// SIGN FUNCTION
 // =========================
 function sign(query) {
   return crypto
@@ -21,10 +24,11 @@ function sign(query) {
 }
 
 // =========================
-// SEND REQUEST (BINGX)
+// SEND ORDER (POST - BẮT BUỘC)
 // =========================
-async function send(path, params) {
+async function sendOrder(path, params) {
   const timestamp = Date.now();
+
   const query = new URLSearchParams({
     ...params,
     timestamp,
@@ -34,14 +38,18 @@ async function send(path, params) {
   const signature = sign(query);
   const url = `${BASE_URL}${path}?${query}&signature=${signature}`;
 
+  console.log("➡️ REQUEST:", url);
+
   const res = await fetch(url, {
-    method: "GET", // BingX Swap V2 yêu cầu GET
+    method: "POST", // 🔥 BẮT BUỘC POST
     headers: {
       "X-BX-APIKEY": API_KEY,
+      "Content-Type": "application/json",
     },
   });
 
-  return await res.json();
+  const json = await res.json();
+  return json;
 }
 
 // =========================
@@ -50,78 +58,99 @@ async function send(path, params) {
 app.post("/webhook", async (req, res) => {
   try {
     const { type, side, sl, tp1, qty } = req.body;
+
+    console.log("📩 ENTRY:", req.body);
+
     if (type !== "entry_scalp") {
+      console.log("⏭️ IGNORE: not entry_scalp");
       return res.json({ ignored: true });
     }
 
+    if (!side || !qty) {
+      console.log("❌ INVALID PAYLOAD");
+      return res.status(400).json({ error: "Invalid payload" });
+    }
+
+    // =========================
+    // CONFIG
+    // =========================
     const symbol = "BTC-USDT";
     const closeSide = side === "BUY" ? "SELL" : "BUY";
     const ts = Date.now();
 
-    console.log("📩 ENTRY:", req.body);
-
     // =========================
-    // ENTRY (MARKET)
+    // ENTRY ORDER (MARKET)
     // =========================
-    const entry = await send("/openApi/swap/v2/trade/order", {
+    const entry = await sendOrder("/openApi/swap/v2/trade/order", {
       symbol,
       side,
       type: "MARKET",
       quantity: qty,
-      marginType: "ISOLATED",          // đổi CROSSED nếu muốn Cross
-      clientOrderId: `TV_ENTRY_${ts}` // 🔥 BẮT BUỘC
+      marginType: "ISOLATED", // đổi CROSSED nếu muốn
+      clientOrderId: `TV_ENTRY_${ts}`,
     });
 
     console.log("✅ ENTRY RESULT:", entry);
+
     if (entry.code !== 0) {
+      console.log("❌ ENTRY FAILED");
       return res.json({ entry_error: entry });
     }
 
     // =========================
     // STOP LOSS
     // =========================
-    const stopLoss = await send("/openApi/swap/v2/trade/order", {
-      symbol,
-      side: closeSide,
-      type: "STOP_MARKET",
-      stopPrice: sl,
-      quantity: qty,
-      reduceOnly: true,
-      marginType: "ISOLATED",
-      clientOrderId: `TV_SL_${ts}`    // 🔥 BẮT BUỘC
-    });
+    if (sl) {
+      const stopLoss = await sendOrder("/openApi/swap/v2/trade/order", {
+        symbol,
+        side: closeSide,
+        type: "STOP_MARKET",
+        stopPrice: sl,
+        quantity: qty,
+        reduceOnly: true,
+        marginType: "ISOLATED",
+        clientOrderId: `TV_SL_${ts}`,
+      });
 
-    console.log("🛑 SL RESULT:", stopLoss);
+      console.log("🛑 SL RESULT:", stopLoss);
+    }
 
     // =========================
     // TAKE PROFIT (TP1)
     // =========================
-    const takeProfit = await send("/openApi/swap/v2/trade/order", {
-      symbol,
-      side: closeSide,
-      type: "TAKE_PROFIT_MARKET",
-      stopPrice: tp1,
-      quantity: qty,
-      reduceOnly: true,
-      marginType: "ISOLATED",
-      clientOrderId: `TV_TP_${ts}`    // 🔥 BẮT BUỘC
-    });
+    if (tp1) {
+      const takeProfit = await sendOrder("/openApi/swap/v2/trade/order", {
+        symbol,
+        side: closeSide,
+        type: "TAKE_PROFIT_MARKET",
+        stopPrice: tp1,
+        quantity: qty,
+        reduceOnly: true,
+        marginType: "ISOLATED",
+        clientOrderId: `TV_TP_${ts}`,
+      });
 
-    console.log("🎯 TP1 RESULT:", takeProfit);
+      console.log("🎯 TP RESULT:", takeProfit);
+    }
 
-    res.json({ ok: true, entry, stopLoss, takeProfit });
+    return res.json({ ok: true });
 
   } catch (e) {
-    console.error("❌ ERROR:", e);
-    res.status(500).json({ error: e.message });
+    console.error("❌ SERVER ERROR:", e);
+    return res.status(500).json({ error: e.message });
   }
 });
 
 // =========================
 // HEALTH CHECK
 // =========================
-app.get("/", (_, res) => res.send("BingX AutoBot Swap V2 running"));
+app.get("/", (_, res) => {
+  res.send("🚀 BingX AutoBot Swap V2 running");
+});
 
+// =========================
+// START SERVER
+// =========================
 app.listen(PORT, () => {
   console.log(`🚀 BingX AutoBot running on port ${PORT}`);
 });
