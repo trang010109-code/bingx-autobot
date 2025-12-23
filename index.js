@@ -1,6 +1,5 @@
 import express from "express";
 import crypto from "crypto";
-import fetch from "node-fetch";
 
 const app = express();
 app.use(express.json());
@@ -11,6 +10,7 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.BINGX_API_KEY;
 const SECRET_KEY = process.env.BINGX_SECRET_KEY;
+
 const BASE_URL = "https://open-api.bingx.com";
 
 // =========================
@@ -24,7 +24,7 @@ function sign(query) {
 }
 
 // =========================
-// SEND ORDER (POST - BẮT BUỘC)
+// SEND ORDER (POST – BẮT BUỘC)
 // =========================
 async function sendOrder(path, params) {
   const timestamp = Date.now();
@@ -41,7 +41,7 @@ async function sendOrder(path, params) {
   console.log("➡️ REQUEST:", url);
 
   const res = await fetch(url, {
-    method: "POST", // 🔥 BẮT BUỘC POST
+    method: "POST", // 🔥 BẮT BUỘC POST với BingX
     headers: {
       "X-BX-APIKEY": API_KEY,
       "Content-Type": "application/json",
@@ -74,12 +74,12 @@ app.post("/webhook", async (req, res) => {
     // =========================
     // CONFIG
     // =========================
-    const symbol = "BTC-USDT";
+    const symbol = "BTC-USDT"; // đổi nếu bạn trade cặp khác
     const closeSide = side === "BUY" ? "SELL" : "BUY";
     const ts = Date.now();
 
     // =========================
-    // ENTRY ORDER (MARKET)
+    // ENTRY (MARKET)
     // =========================
     const entry = await sendOrder("/openApi/swap/v2/trade/order", {
       symbol,
