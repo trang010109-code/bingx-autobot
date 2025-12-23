@@ -1,9 +1,6 @@
 import express from "express";
 import crypto from "crypto";
 
-/* =====================================================
-   CONFIG
-===================================================== */
 const app = express();
 app.use(express.json());
 
@@ -13,27 +10,26 @@ const SECRET_KEY = process.env.BINGX_SECRET_KEY;
 
 const BASE_URL = "https://open-api.bingx.com";
 
-// FUTURES SYMBOL (QUAN TRỌNG)
-const SYMBOL = "BTCUSDT";          // ✅ ĐÚNG cho BingX Futures
-const MARGIN_TYPE = "ISOLATED";    // hoặc "CROSSED"
+const SYMBOL = "BTCUSDT";
+const MARGIN_TYPE = "ISOLATED";
+const CONTRACT_SIZE = 0.001; // 1 contract = 0.001 BTC
 
-/* =====================================================
-   SIGNATURE
-===================================================== */
-function sign(queryString) {
+// =========================
+// SIGN
+// =========================
+function sign(query) {
   return crypto
     .createHmac("sha256", SECRET_KEY)
-    .update(queryString)
+    .update(query)
     .digest("hex");
 }
 
-/* =====================================================
-   SEND REQUEST (POST – SWAP V2)
-===================================================== */
-async function sendOrder(path, params) {
+// =========================
+// SEND REQUEST (POST)
+// =========================
+async function send(path, params) {
   const timestamp = Date.now();
 
-  // Query string để ký
   const query = new URLSearchParams({
     ...params,
     timestamp,
@@ -41,51 +37,51 @@ async function sendOrder(path, params) {
   }).toString();
 
   const signature = sign(query);
-
   const url = `${BASE_URL}${path}?${query}&signature=${signature}`;
 
   console.log("➡️ REQUEST:", url);
 
   const res = await fetch(url, {
-    method: "POST", // ✅ BẮT BUỘC POST
+    method: "POST",
     headers: {
       "X-BX-APIKEY": API_KEY,
       "Content-Type": "application/json",
     },
   });
 
-  const data = await res.json();
-  return data;
+  return await res.json();
 }
 
-/* =====================================================
-   WEBHOOK FROM TRADINGVIEW
-===================================================== */
+// =========================
+// WEBHOOK
+// =========================
 app.post("/webhook", async (req, res) => {
   try {
     const { type, side, sl, tp1, qty } = req.body;
-
     console.log("📩 ENTRY:", req.body);
 
-    // Validate
     if (type !== "entry_scalp") {
       return res.json({ ignored: true });
     }
-    if (!side || !qty) {
-      return res.status(400).json({ error: "Missing side or qty" });
-    }
 
+    // Convert BTC → CONTRACT
+    const contracts = Math.max(1, Math.round(qty / CONTRACT_SIZE));
+
+    const positionSide = side === "BUY" ? "LONG" : "SHORT";
     const closeSide = side === "BUY" ? "SELL" : "BUY";
+    const closePositionSide = positionSide === "LONG" ? "SHORT" : "LONG";
+
     const ts = Date.now();
 
-    /* =========================
-       ENTRY — MARKET
-    ========================= */
-    const entry = await sendOrder("/openApi/swap/v2/trade/order", {
+    // =========================
+    // ENTRY
+    // =========================
+    const entry = await send("/openApi/swap/v2/trade/order", {
       symbol: SYMBOL,
       side,
+      positionSide,
       type: "MARKET",
-      quantity: qty,
+      quantity: contracts,
       marginType: MARGIN_TYPE,
       clientOrderId: `TV_ENTRY_${ts}`,
     });
@@ -97,60 +93,57 @@ app.post("/webhook", async (req, res) => {
       return res.json({ entry_error: entry });
     }
 
-    /* =========================
-       STOP LOSS
-    ========================= */
+    // =========================
+    // STOP LOSS
+    // =========================
     if (sl) {
-      const stopLoss = await sendOrder("/openApi/swap/v2/trade/order", {
+      const stopLoss = await send("/openApi/swap/v2/trade/order", {
         symbol: SYMBOL,
         side: closeSide,
+        positionSide: closePositionSide,
         type: "STOP_MARKET",
         stopPrice: sl,
-        quantity: qty,
+        quantity: contracts,
         reduceOnly: true,
         marginType: MARGIN_TYPE,
         clientOrderId: `TV_SL_${ts}`,
       });
-
       console.log("🛑 SL RESULT:", stopLoss);
     }
 
-    /* =========================
-       TAKE PROFIT (TP1)
-    ========================= */
+    // =========================
+    // TAKE PROFIT
+    // =========================
     if (tp1) {
-      const takeProfit = await sendOrder("/openApi/swap/v2/trade/order", {
+      const takeProfit = await send("/openApi/swap/v2/trade/order", {
         symbol: SYMBOL,
         side: closeSide,
+        positionSide: closePositionSide,
         type: "TAKE_PROFIT_MARKET",
         stopPrice: tp1,
-        quantity: qty,
+        quantity: contracts,
         reduceOnly: true,
         marginType: MARGIN_TYPE,
         clientOrderId: `TV_TP_${ts}`,
       });
-
-      console.log("🎯 TP1 RESULT:", takeProfit);
+      console.log("🎯 TP RESULT:", takeProfit);
     }
 
     res.json({ ok: true });
 
-  } catch (err) {
-    console.error("❌ SERVER ERROR:", err);
-    res.status(500).json({ error: err.message });
+  } catch (e) {
+    console.error("❌ SERVER ERROR:", e);
+    res.status(500).json({ error: e.message });
   }
 });
 
-/* =====================================================
-   HEALTH CHECK
-===================================================== */
+// =========================
+// HEALTH
+// =========================
 app.get("/", (_, res) => {
-  res.send("🚀 BingX AutoBot Swap V2 is running");
+  res.send("🚀 BingX Swap AutoBot is running");
 });
 
-/* =====================================================
-   START SERVER
-===================================================== */
 app.listen(PORT, () => {
   console.log(`🚀 BingX AutoBot running on port ${PORT}`);
 });
